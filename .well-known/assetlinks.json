@@ -1,0 +1,14 @@
+[
+  {
+    "relation": [
+      "delegate_permission/common.handle_all_urls"
+    ],
+    "target": {
+      "namespace": "android_app",
+      "package_name": "com.powerhouse.mcatbio",
+      "sha256_cert_fingerprints": [
+        "AE:00:CA:26:EE:8E:65:C0:A8:D9:40:03:8B:F1:A3:FF:B2:98:0B:06:C8:2F:1A:E1:31:EA:50:AB:18:9A:61:81"
+      ]
+    }
+  }
+]

@@ -1,0 +1,22 @@
+{
+ "name": "Powerhouse",
+ "short_name": "Powerhouse",
+ "start_url": "https://mr-aio.github.io/powerhouse/",
+ "scope": "https://mr-aio.github.io/powerhouse/",
+ "display": "standalone",
+ "background_color": "#14112B",
+ "theme_color": "#14112B",
+ "icons": [
+  {
+   "src": "https://mr-aio.github.io/powerhouse/icon-192.png",
+   "sizes": "192x192",
+   "type": "image/png"
+  },
+  {
+   "src": "https://mr-aio.github.io/powerhouse/icon-512.png",
+   "sizes": "512x512",
+   "type": "image/png",
+   "purpose": "any maskable"
+  }
+ ]
+}
