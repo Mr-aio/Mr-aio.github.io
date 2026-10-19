@@ -21,12 +21,12 @@ ul{padding-left:22px} footer{margin-top:40px;padding-top:16px;border-top:1px sol
 <p class="muted">Effective October 18, 2026. Applies to the Powerhouse Android app and its web version at https://mr-aio.github.io/powerhouse/.</p>
 
 <h2>The short version</h2>
-<p>Powerhouse has no accounts, no ads, no analytics and no tracking. Your progress stays on your device. The only information that ever leaves it is what you choose to send in a battle link.</p>
+<p>Powerhouse has no sign-in, no ads, no analytics and no tracking. Your progress stays on your device. The only exception is battles with friends: a battle's names and scores are shared with the other player, and synced through a small database so neither of you has to resend turns.</p>
 
 <h2>What the app stores, and where</h2>
 <ul>
 <li>Your answers, scores, ATP, streaks, badges, settings and battles are saved in the app's storage on your device (or in your browser's storage for the web version).</li>
-<li>None of this is sent to the developer or to anyone else. There is no server that receives it.</li>
+<li>Your study progress is never sent anywhere.</li>
 </ul>
 
 <h2>Battles</h2>
@@ -34,19 +34,21 @@ ul{padding-left:22px} footer{margin-top:40px;padding-top:16px;border-top:1px sol
 <li>When you send a battle, the app builds a link that contains the battle name you chose, a random ID for your device, the battle's questions, and both players' results (right or wrong, and answer times).</li>
 <li>You decide who gets the link by sending it through your own messaging app. Anyone who has the link can open that battle, so pick a battle name you're comfortable sharing.</li>
 <li>The battle code sits after the "#" in the link. Browsers don't send that part to the web server.</li>
+<li>After the first link, battle turns sync through a Google Firebase database used only for Powerhouse battles. For each battle it stores the battle code (battle names, questions and results) and a random anonymous ID for each of the two players. There is no email, phone number or sign-in.</li>
+<li>Only the two players in a battle can read or change it. A battle is deleted from the database when it ends or when either player removes it. A battle with no moves for 30 days is closed and deleted the next time either player opens Powerhouse.</li>
 </ul>
 
 <h2>Clipboard and permissions</h2>
 <ul>
 <li>The app reads your clipboard only when you tap Paste on the Battles screen.</li>
-<li>The only Android permission it uses is vibration, for haptic feedback you can turn off in Settings.</li>
+<li>It uses two Android permissions: vibration, for haptic feedback you can turn off in Settings, and internet access, for battle sync.</li>
 </ul>
 
-<h2>Web pages and hosting</h2>
-<p>Battle links and the web version are served by GitHub Pages, operated by GitHub, Inc. Like most web hosts, GitHub may record technical details such as IP addresses when a page loads. See <a href="https://docs.github.com/site-policy/privacy-policies/github-general-privacy-statement">GitHub's privacy statement</a>.</p>
+<h2>Service providers</h2>
+<p>Battle sync runs on Google Firebase (anonymous authentication and Cloud Firestore), operated by Google LLC. See <a href="https://firebase.google.com/support/privacy">Firebase privacy and security</a>. Battle links and the web version are served by GitHub Pages, operated by GitHub, Inc. Like most web services, these providers may record technical details such as IP addresses. See <a href="https://docs.github.com/site-policy/privacy-policies/github-general-privacy-statement">GitHub's privacy statement</a>.</p>
 
 <h2>Deleting your data</h2>
-<p>Settings &gt; Reset progress clears your progress. Each battle has a "Remove this battle" option. Uninstalling the app, or clearing the site's data in your browser, deletes everything.</p>
+<p>Settings &gt; Reset progress clears your progress. Each battle has a "Remove this battle" option. Uninstalling the app, or clearing the site's data in your browser, deletes everything on your device. Removing a battle that is still in progress also deletes it from the database for both players. Finished battles are deleted from the database automatically. To ask for a battle to be deleted sooner, email the developer contact on Powerhouse's Google Play listing.</p>
 
 <h2>Children</h2>
 <p>Powerhouse is made for adults preparing for the MCAT and is not directed to children under 13.</p>

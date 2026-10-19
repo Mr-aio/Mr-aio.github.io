@@ -688,6 +688,12 @@ svg{display:block}
 @media (prefers-reduced-motion: reduce){.bt-vsx,.bt-send,.bt-dots i,.bt-time.low,.bt-pick,.bt-flip{animation:none}}
 
 .dialog a.btn{display:inline-flex;align-items:center;justify-content:center;text-decoration:none}
+.bt-synced{display:flex;align-items:flex-start;gap:6px}
+.bt-synced svg{flex:none;width:16px;height:16px;margin-top:3px;color:var(--good)}
+.bt-who{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;margin-top:4px}
+.bt-whob{display:flex;flex-direction:column;align-items:center;gap:6px;padding:10px 4px;border-radius:var(--r-md);background:var(--sunk);min-width:0}
+.bt-whob b{font-weight:700;font-size:14px;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.bt-whob:active{transform:scale(.95)}
 
 @media (prefers-reduced-motion: reduce){
   *,*::before,*::after{animation:none!important;transition:none!important}
@@ -2938,7 +2944,7 @@ SCREENS.settings = {
       <div class="about">
         <p>Powerhouse turns MCAT biology into quick rounds across 12 chapters: ${fmt(Object.keys(QS).length)} multiple-choice questions, ${BANK.reduce((a, c) => a + c.tf.length, 0)} true-or-false facts, ${BANK.reduce((a, c) => a + c.match.length, 0)} match sets and ${BANK.reduce((a, c) => a + c.seq.length, 0)} pathways.</p>
         <p>Every question and explanation is original, written for this app. After each answer, tap the topic to see its key points or practice it.</p>
-        <p>Version 1.8. Progress and battles are stored on this device only. Battles travel as a link inside the messages you send; there are no accounts or servers.</p>
+        <p>Version 1.9. Progress is stored on this device. The first battle with a friend travels as a link; after that, battle turns sync through Powerhouse’s server so nobody has to resend. No accounts or sign-in.</p>
         <p>MCAT is a registered trademark of the Association of American Medical Colleges, which is not affiliated with this app.</p>
       </div>`;
   }
@@ -3057,13 +3063,16 @@ function bTotals(b) {
 }
 function bStatus(b) {
   const n = bNext(b), o = bOpp(b), on = o ? o.n : 'a friend';
+  if (b.closed && n.t !== 'over') return { k: 'done', s: b.closed === 'expired' ? 'Closed after 30 days without a move' : on + ' left this battle' };
   if (n.t === 'play') return { k: 'move', s: (b.run && b.run.r === n.r ? 'Finish round ' : 'Your turn: round ') + (n.r + 1) };
   if (n.t === 'pick') return { k: 'move', s: n.r === 0 ? 'Pick the first category' : 'Your turn: pick round ' + (n.r + 1) };
   if (n.t === 'wait' && !b.p[1]) return b.dirty ? { k: 'move', s: 'Ready to send to a friend' } : { k: 'wait', s: b.joins ? 'Open challenge, ' + b.joins + (b.joins === 1 ? ' friend' : ' friends') + ' joined' : 'Waiting for a friend to join' };
+  if (n.t === 'wait' && Sync.on && b.ouid) return b.dirty ? (b.syncFail ? { k: 'move', s: 'Not sent yet. Tap to retry' } : { k: 'wait', s: 'Sending to ' + on + '…' }) : { k: 'wait', s: 'Waiting for ' + on };
   if (n.t === 'wait') return b.dirty ? { k: 'move', s: 'Ready to send to ' + on } : { k: 'wait', s: 'Waiting for ' + on };
   if (n.t === 'over') {
     const [a, c] = bTotals(b), res = a > c ? 'You won' : a < c ? 'You lost' : 'Tie';
-    return { k: b.dirty ? 'move' : 'done', s: res + ', ' + fmt(a) + ' to ' + fmt(c) + (b.dirty ? '. Send the result' : '') };
+    const owe = b.dirty && !(Sync.on && b.ouid && !b.syncFail);
+    return { k: owe ? 'move' : 'done', s: res + ', ' + fmt(a) + ' to ' + fmt(c) + (owe ? '. Send the result' : '') };
   }
   return { k: 'done', s: 'Between ' + b.p[0].n + ' and ' + (b.p[1] ? b.p[1].n : 'a friend') };
 }
@@ -3115,12 +3124,13 @@ function bEncode(b) {
   w.put(bitSum(w.bits), 18);
   return toChars(w.bits);
 }
-const bLink = b => LINK_BASE ? LINK_BASE + 'b/#' + bEncode(b) : 'PH2:' + bEncode(b);
+const syncId = () => Sync.on && S.sync && S.sync.uid ? '.' + S.sync.uid : '';
+const bLink = b => (LINK_BASE ? LINK_BASE + 'b/#' : 'PH2:') + bEncode(b) + syncId();
 // Returns null when the text holds no battle; throws when it holds a damaged one.
 function bDecode(text) {
   const t = String(text || '');
-  const m2 = /(?:\/b\/?#|#b=|battle\/|PH2:)([0-9A-Za-z_-]{6,})/.exec(t);
-  if (m2) return decodeV2(m2[1]);
+  const m2 = /(?:\/b\/?#|#b=|battle\/|PH2:)([0-9A-Za-z_-]{6,})(?:\.([0-9A-Za-z]{10,64}))?/.exec(t);
+  if (m2) { const inc = decodeV2(m2[1]); if (m2[2]) inc.cuid = m2[2]; return inc; }
   if (/PH1:/.test(t)) return decodeV1(t);
   if (/\/b\/?#|#b=|PH2:/.test(t)) throw new Error('empty');
   return null;
@@ -3181,6 +3191,48 @@ function bMerge(b, inc) {
 }
 
 /* ---------- opening, creating, sending ---------- */
+// Merge an incoming battle (from a link or from sync) into this phone's copy.
+// Returns { b, isNew, changed, finishedNow } or null when there is nothing to join.
+function importBattle(inc, o) {
+  o = o || {};
+  const B = bStore(); S.bjoin = S.bjoin || {};
+  // Joining an open challenge: each friend gets their own copy under a new battle id, so one link
+  // can go to several friends or a group chat. Opening the same link again returns to that copy.
+  if (!inc.p[1] && inc.p[0].d !== me().dev) {
+    if (o.sync) return null;
+    const mine = S.bjoin[inc.id];
+    if (mine && B[mine]) return { b: B[mine], isNew: false, changed: false, finishedNow: false, again: true };
+    const nid = rid(8); S.bjoin[inc.id] = nid; inc.id = nid; inc.p[1] = { n: me().name, d: me().dev };
+  }
+  // A friend's first reply to my open challenge becomes its own battle; the challenge stays open for others.
+  if (!B[inc.id] && inc.p[0].d === me().dev && inc.p[1] && inc.r[0]) {
+    const parent = Object.values(B).find(x => !x.p[1] && x.p[0].d === me().dev && x.r[0] && x.r[0].c === inc.r[0].c && x.r[0].q.join() === inc.r[0].q.join());
+    if (parent) { parent.joins = (parent.joins || 0) + 1; inc.atp = parent.atp || 0; }
+  }
+  let b = B[inc.id];
+  if (b && b.closed) delete b.closed;   // it came back, so it's live again
+  const sig = x => x ? JSON.stringify([x.p, x.r, x.s]) : '';
+  const was = sig(b), wasOver = !!b && bOver(b), isNew = !b;
+  if (b) bMerge(b, inc);
+  else {
+    inc.p = inc.p.map(x => x && { n: x.d === me().dev ? me().name : x.n || 'Friend', d: x.d });
+    b = B[inc.id] = Object.assign({ run: null, dirty: false, atp: 0, created: Date.now() }, inc);
+    delete b.cuid;
+  }
+  if (!b.p[1] && b.p[0].d !== me().dev) b.p[1] = { n: me().name, d: me().dev };
+  const ou = o.ouid || inc.cuid;
+  if (ou && !b.ouid && !(S.sync && ou === S.sync.uid)) b.ouid = ou;
+  const changed = sig(b) !== was;
+  if (changed) { b.updated = Date.now(); settle(b); checkBadges(); }
+  rememberFriend(b); save();
+  return { b, isNew, changed, finishedNow: !wasOver && bOver(b) };
+}
+function rememberFriend(b) {
+  const o = bOpp(b);
+  if (!o || !b.ouid || bSide(b) < 0) return;
+  S.friends = S.friends || {};
+  S.friends[b.ouid] = { n: o.n, d: o.d, uid: b.ouid, last: Math.max(b.updated || 0, (S.friends[b.ouid] || {}).last || 0) };
+}
 function openBattleText(text) {
   let inc;
   try { inc = bDecode(text); } catch (e) { SFX.play('wrong'); toast('That battle came through incomplete', 'Copy the entire message and try again.'); return false; }
@@ -3191,41 +3243,18 @@ function openBattleText(text) {
     return false;
   }
   if (!me().name) { askName(() => openBattleText(text)); return true; }
-  const B = bStore(); S.bjoin = S.bjoin || {};
-  // Joining an open challenge: each friend gets their own copy under a new battle id, so one link
-  // can go to several friends or a group chat. Opening the same link again returns to that copy.
-  if (!inc.p[1] && inc.p[0].d !== me().dev) {
-    const mine = S.bjoin[inc.id];
-    if (mine && B[mine]) { const t = stack[stack.length - 1]; if (!(t && t.name === 'battle' && t.params.id === mine)) go('battle', { id: mine }); return true; }
-    const nid = rid(8); S.bjoin[inc.id] = nid; inc.id = nid; inc.p[1] = { n: me().name, d: me().dev };
-  }
-  // A friend's first reply to my open challenge becomes its own battle; the challenge stays open for others.
-  if (!B[inc.id] && inc.p[0].d === me().dev && inc.p[1] && inc.r[0]) {
-    const parent = Object.values(B).find(x => !x.p[1] && x.p[0].d === me().dev && x.r[0] && x.r[0].c === inc.r[0].c && x.r[0].q.join() === inc.r[0].q.join());
-    if (parent) { parent.joins = (parent.joins || 0) + 1; inc.atp = parent.atp || 0; }
-  }
-  let b = B[inc.id];
-  const sig = x => x ? JSON.stringify([x.p, x.r, x.s]) : '';
-  const was = sig(b);
-  if (b) bMerge(b, inc);
-  else {
-    inc.p = inc.p.map(x => x && { n: x.d === me().dev ? me().name : x.n || 'Friend', d: x.d });
-    b = B[inc.id] = Object.assign({ run: null, dirty: false, atp: 0, created: Date.now() }, inc);
-    if (b.p[1] && b.p[1].d === me().dev) b.dirty = false;
-  }
-  if (!b.p[1] && b.p[0].d !== me().dev) b.p[1] = { n: me().name, d: me().dev };
-  if (sig(b) !== was) { b.updated = Date.now(); settle(b); checkBadges(); save(); }
-  else if (was) toast('Already up to date', 'You’ve already played everything in that message.');
-  SFX.play('whoosh'); hap('select');
+  const r = importBattle(inc);
   const ta = $('#btPaste'); if (ta) ta.value = '';
+  if (!r.again && !r.isNew && !r.changed) toast('Already up to date', 'You’ve already played everything in that message.');
+  SFX.play('whoosh'); hap('select');
   const top = stack[stack.length - 1];
-  if (top && top.name === 'battle' && top.params.id === b.id) render(false); else go('battle', { id: b.id });
+  if (top && top.name === 'battle' && top.params.id === r.b.id) render(false); else go('battle', { id: r.b.id });
   return true;
 }
 // From a link opened in a phone browser (not the app): on Android, offer to hand the battle to the app
 // before this browser joins it, so the player's identity stays in one place.
 function linkArrival(hash) {
-  const skip = /^#bw=/.test(hash), code = hash.replace(/^#bw?=/, '');
+  const skip = /^#bw=/.test(hash), code = hash.replace(/^#bw?=/, '').replace(/[^0-9A-Za-z_.-]/g, '');
   let inc = null; try { inc = bDecode('#b=' + code); } catch (e) { }
   const dev = me().dev, mineAlready = inc && ((S.battles && S.battles[inc.id]) || (S.bjoin && S.bjoin[inc.id]) || inc.p.some(x => x && x.d === dev));
   const fresh = inc && !mineAlready;
@@ -3254,12 +3283,32 @@ function pendingBattle() {
 function newBattle(opp) {
   if (!me().name) return askName(() => newBattle(opp));
   const b = { id: rid(8), p: [{ n: me().name, d: me().dev }, opp ? { n: opp.n, d: opp.d } : null], r: [], s: [[], []], run: null, dirty: false, atp: 0, created: Date.now(), updated: Date.now() };
+  if (opp && opp.uid) b.ouid = opp.uid;
   bStore()[b.id] = b; prune(); save(); SFX.play('whoosh');
   go('battle', { id: b.id }, { replace: stack[stack.length - 1].name === 'battle' });
 }
-function rematch(b) { const sd = bSide(b); newBattle(sd >= 0 ? b.p[1 - sd] : null); }
+function rematch(b) { const sd = bSide(b), o = sd >= 0 ? b.p[1 - sd] : null; newBattle(o && Object.assign({ uid: b.ouid }, o)); }
+// New battle: when sync is on and you've battled friends before, pick one (no link needed) or someone new.
+function startNewBattle() {
+  if (!me().name) return askName(startNewBattle);
+  const fr = Sync.on ? Object.values(S.friends || {}).sort((a, b) => b.last - a.last).slice(0, 6) : [];
+  if (!fr.length) return newBattle();
+  const m = $('#modal');
+  m.innerHTML = `<div class="scrim" data-x="no"></div><div class="dialog" role="dialog" aria-modal="true" aria-labelledby="nbT"><h2 id="nbT">Battle who?</h2>
+    <p>Friends you've played get your turns automatically. Anyone else gets a link.</p>
+    <div class="bt-who">${fr.map(f => `<button class="bt-whob" data-x="f" data-uid="${esc(f.uid)}">${bAv(f)}<b>${esc(f.n)}</b></button>`).join('')}
+    <button class="bt-whob new" data-x="new"><span class="bt-av" style="--h:250" aria-hidden="true">+</span><b>New friend</b></button></div>
+    <div class="row"><button class="btn ghost" data-x="no" style="grid-column:1 / -1">Cancel</button></div></div>`;
+  m.hidden = false;
+  m.onclick = e => {
+    const x = e.target.closest('[data-x]'); if (!x) return;
+    closeModal();
+    if (x.dataset.x === 'f') { const f = (S.friends || {})[x.dataset.uid]; if (f) newBattle({ n: f.n, d: f.d, uid: f.uid }); }
+    else if (x.dataset.x === 'new') newBattle();
+  };
+}
 function prune() {
-  const done = Object.values(bStore()).filter(b => bOver(b) && !b.dirty).sort((a, b) => b.updated - a.updated);
+  const done = Object.values(bStore()).filter(b => (bOver(b) && !b.dirty) || b.closed).sort((a, b) => b.updated - a.updated);
   done.slice(30).forEach(b => { delete S.battles[b.id]; });
 }
 function bMessage(b) {
@@ -3270,6 +3319,8 @@ function bMessage(b) {
 }
 async function bShare(b) {
   if (!b) return;
+  // The link carries this player's sync id so the friend's replies come back automatically.
+  if (Sync.on && !(S.sync && S.sync.uid)) { try { await Promise.race([syncToken(), new Promise((_, no) => setTimeout(() => no(new Error('slow')), 6000))]); } catch (e) { } }
   const text = bMessage(b);
   b.dirty = false; b.sentAt = Date.now(); save();
   render(false);
@@ -3279,6 +3330,14 @@ async function bShare(b) {
     try { await navigator.share({ text }); return; }
     catch (e) { if (e && e.name === 'AbortError') { b.dirty = true; save(); render(false); return; } }
   }
+  showCode(text);
+}
+function bNudge(b) {
+  if (!b) return;
+  const o = bOpp(b), text = `Your move in our Powerhouse battle${o ? ', ' + o.n : ''}! ` + bLink(b);
+  SFX.play('whoosh'); hap('select');
+  if (window.Android && Android.share) { try { Android.share(text); return; } catch (e) { } }
+  if (navigator.share) { navigator.share({ text }).catch(() => { }); return; }
   showCode(text);
 }
 async function copyText(text) {
@@ -3326,6 +3385,7 @@ function askName(then) {
     me().name = v;
     Object.values(bStore()).forEach(b => b.p.forEach(p => { if (p && p.d === me().dev) p.n = v; }));
     save(); closeModal(); SFX.play('select'); hap('select');
+    if (Sync.on) syncPoll(true);
     if (then) then(); else render(false);
   };
   m.onclick = e => { const x = e.target.closest('[data-x]'); if (!x) return; if (x.dataset.x === 'yes') return ok(); closeModal(); };
@@ -3429,6 +3489,7 @@ function battleRoundDone() {
   if (b && b.run && b.run.r === sess.br) commitRun(b, sess.atp);
   checkBadges(); save();
   back();
+  if (b && Sync.on && b.ouid) syncPush(b).then(() => { const t = stack[stack.length - 1]; if (t && t.name === 'battle' && t.params.id === b.id) render(false); });
 }
 document.addEventListener('visibilitychange', () => {
   if (document.hidden || !sess || sess.kind !== 'battle' || sess.answered || !stack.length || stack[stack.length - 1].name !== 'quiz') return;
@@ -3463,6 +3524,7 @@ SCREENS.battles = {
       <section class="bt-how"><h2 class="h2">How battles work</h2><ol>
         <li>Pick a category and answer 5 questions. You get 20 seconds each, and faster right answers score more.</li>
         <li>Send the battle link to a friend in any messaging app. They tap it, answer the same questions, then pick the next category. No app needed: it plays in the browser too.</li>
+        ${Sync.on ? '<li>After that first link, turns go back and forth automatically. Rematches and new battles with friends you’ve played don’t need a link at all.</li>' : ''}
         <li>Best total score after 3 rounds wins. You earn ATP for every right answer, plus ${BXP.win} for a win (${BXP.loss} for playing it out).</li></ol></section>`;
   },
   after() { pendingBattle(); }
@@ -3481,7 +3543,7 @@ SCREENS.battle = {
       const W = WORLD[R.c], m1 = rDone(b.s[sd][i]), t1 = rDone(b.s[1 - sd][i]);
       const mv = m1 ? rPts(b.s[sd][i]) : null, tv = t1 ? rPts(b.s[1 - sd][i]) : null;
       const w = m1 && t1 ? (mv > tv ? 'me' : mv < tv ? 'them' : 'tie') : '';
-      const mTxt = m1 ? fmt(mv) : b.run && b.run.r === i ? 'Started' : sd0 >= 0 ? 'Your turn' : 'Not yet';
+      const mTxt = m1 ? fmt(mv) : b.run && b.run.r === i ? 'Started' : sd0 >= 0 && !b.closed ? 'Your turn' : 'Not yet';
       const tTxt = t1 ? (m1 || sd0 < 0 ? fmt(tv) : 'Played') : 'Not yet';
       return `<li class="bt-round${w ? ' w-' + w : ''}" data-r="${i}" style="--h:${W.h}"><span class="bt-rn">${i + 1}</span>
         <span class="bt-rc"><b>${esc(W.short)}</b><small>${m1 ? b.s[sd][i].filter(e => e[0]).length + ' of 5 right' : 'Chapter ' + R.c}</small></span>
@@ -3489,7 +3551,11 @@ SCREENS.battle = {
         <span class="bt-sc them${w === 'them' ? ' lead' : ''}${t1 && m1 ? '' : ' dim'}" data-v="${t1 && (m1 || sd0 < 0) ? tv : ''}">${tTxt}</span></li>`;
     }).join('');
     let act = '';
-    if (n.t === 'pick') {
+    if (b.closed && n.t !== 'over') {
+      act = `<section class="bt-act"><div class="bt-wait">Battle closed</div>
+        <p class="small muted">${b.closed === 'expired' ? 'Nobody made a move for 30 days, so this battle ended without a winner.' : on + ' removed this battle, so it ended without a winner.'}</p>
+        <div class="r-actions"><button class="btn ghost" data-back>Done</button><button class="btn primary" data-act="battleRematch" data-id="${b.id}">Rematch</button></div></section>`;
+    } else if (n.t === 'pick') {
       act = `<section class="bt-act"><h2 class="h2">${n.r === 0 ? 'Pick the first category' : 'Pick the category for round ' + (n.r + 1)}</h2>
         <p class="small muted">${oP ? on + ' gets' : 'Your friend gets'} the same 5 questions.</p>
         <div class="bt-picks">${pickOpts(b, n.r).map(ch => `<button class="bt-pick" data-act="battlePick" data-id="${b.id}" data-c="${ch}" style="--h:${WORLD[ch].h}"><span class="bt-lens">${specimen(ch)}</span><b>${esc(WORLD[ch].short)}</b><small>Chapter ${ch}</small></button>`).join('')}</div></section>`;
@@ -3497,6 +3563,16 @@ SCREENS.battle = {
       const R = b.r[n.r], resume = b.run && b.run.r === n.r, theyPlayed = rDone(b.s[1 - sd][n.r]);
       act = `<section class="bt-act"><button class="btn primary wide" data-act="battlePlay" data-id="${b.id}">${resume ? 'Finish' : 'Play'} round ${n.r + 1}: ${esc(WORLD[R.c].short)}</button>
         <p class="small muted">5 questions, 20 seconds each. A right answer scores 100, plus up to 50 more for speed.${theyPlayed ? ' ' + on + ' already played this round. You’ll see their score when you finish.' : ''}</p></section>`;
+    } else if (n.t === 'wait' && Sync.on && b.ouid) {
+      // Synced with this friend: no sending. Their move appears here by itself.
+      act = !b.dirty
+        ? `<section class="bt-act"><div class="bt-wait"><span class="bt-dots" aria-hidden="true"><i></i><i></i><i></i></span>Waiting for ${on}</div>
+            <p class="small muted bt-synced">${ICON.check}Your move was sent automatically. ${on}’s move shows up here by itself.</p>
+            <button class="btn ghost wide" data-act="battleNudge" data-id="${b.id}">Nudge ${on}</button></section>`
+        : b.syncFail
+          ? `<section class="bt-act"><div class="bt-wait">Couldn’t send your move yet</div><p class="small muted">Check your connection. It retries by itself, or you can send a link instead.</p>
+              <div class="r-actions"><button class="btn ghost" data-act="battleSend" data-id="${b.id}">Send a link</button><button class="btn primary" data-act="battleRetry" data-id="${b.id}">Try again</button></div></section>`
+          : `<section class="bt-act"><div class="bt-wait"><span class="bt-dots" aria-hidden="true"><i></i><i></i><i></i></span>Sending your move to ${on}…</div></section>`;
     } else if (n.t === 'wait') {
       act = b.dirty
         ? `<section class="bt-act"><button class="btn primary wide bt-send" data-act="battleSend" data-id="${b.id}">Send to ${oP ? on : 'a friend'}</button><p class="small muted">Opens your share menu. Text the link from any messaging app${oP ? '' : ', to one friend or a group chat'}.</p></section>`
@@ -3507,7 +3583,7 @@ SCREENS.battle = {
       act = `<section class="bt-final ${res}"><div class="mito-wrap">${mito(res === 'win' ? 'proud' : res === 'loss' ? 'sad' : 'happy', 104)}</div>
           <h2>${res === 'win' ? 'You win!' : res === 'loss' ? on + ' wins' : 'It’s a tie'}</h2><p class="muted">${fmt(a)} to ${fmt(c)}</p></section>
         <dl class="ledger">${row('Right answers this battle', b.atp || 0)}${row(res === 'win' ? 'Battle win' : res === 'loss' ? 'Battle finished' : 'Battle tied', b.bonus || 0)}${row('ATP made', (b.atp || 0) + (b.bonus || 0), 'total')}</dl>
-        <div class="r-actions">${b.dirty
+        <div class="r-actions">${b.dirty && !(Sync.on && b.ouid && !b.syncFail)
           ? `<button class="btn ghost" data-act="battleRematch" data-id="${b.id}">Rematch</button><button class="btn primary" data-act="battleSend" data-id="${b.id}">Send result</button>`
           : `<button class="btn ghost" data-back>Done</button><button class="btn primary" data-act="battleRematch" data-id="${b.id}">Rematch</button>`}</div>`;
     } else {
@@ -3547,6 +3623,169 @@ SCREENS.battle = {
     if (b.celebrate) { delete b.celebrate; save(); setTimeout(() => choreo({ sound: b.awarded === 'loss' ? 'lose' : 'win', confetti: b.awarded === 'win' }), hadReveal ? 1300 : 200); }
   }
 };
+
+/* ================= battle sync: the players' own Firebase project ================= */
+// After the first link, each finished round is written to Firestore and picked up by the other phone,
+// so nobody has to send texts. Plain REST calls, no SDK: anonymous sign-in gives each install a private
+// id, and the security rules only let a battle's two players read or change it.
+// In the Android app requests go through the native bridge (no CORS or file:// origin issues);
+// in browsers they use fetch. With no config, battles fall back to links only.
+const SYNC_CFG = {"apiKey": "AIzaSyChgbnf-_KzjP6E0B2gwoinPS5RiORiy84", "projectId": "powerhouse-25e9f"};
+const Sync = { on: !!(SYNC_CFG && SYNC_CFG.apiKey && SYNC_CFG.projectId), busy: false, last: 0, err: null, pushing: new Set() };
+const syncBase = () => ({
+  auth: SYNC_CFG.authBase || 'https://identitytoolkit.googleapis.com',
+  token: SYNC_CFG.tokenBase || 'https://securetoken.googleapis.com',
+  fs: (SYNC_CFG.fsBase || 'https://firestore.googleapis.com') + '/v1/projects/' + SYNC_CFG.projectId + '/databases/(default)/documents'
+});
+const docName = id => 'projects/' + SYNC_CFG.projectId + '/databases/(default)/documents/battles/' + id;
+
+let netSeq = 0; const netWait = {};
+window.__phNet = (id, status, body) => { const f = netWait[id]; if (f) { delete netWait[id]; f({ status, body }); } };
+function netCall(url, headers, body) {
+  if (window.Android && Android.net) return new Promise(res => {
+    const id = 'n' + (++netSeq); netWait[id] = res;
+    setTimeout(() => { if (netWait[id]) { delete netWait[id]; res({ status: 0, body: 'timeout' }); } }, 25000);
+    try { Android.net(id, 'POST', url, JSON.stringify(headers || {}), body || ''); } catch (e) { delete netWait[id]; res({ status: 0, body: String(e) }); }
+  });
+  return fetch(url, { method: 'POST', headers, body }).then(async r => ({ status: r.status, body: await r.text() })).catch(e => ({ status: 0, body: String(e) }));
+}
+async function syncToken(fresh) {
+  const a = S.sync || {}, B = syncBase(), k = encodeURIComponent(SYNC_CFG.apiKey);
+  if (!fresh && a.idToken && a.exp > Date.now() + 60000) return a.idToken;
+  if (a.refresh) {
+    const r = await netCall(`${B.token}/v1/token?key=${k}`, { 'Content-Type': 'application/x-www-form-urlencoded' }, 'grant_type=refresh_token&refresh_token=' + encodeURIComponent(a.refresh));
+    if (r.status === 200) { const j = JSON.parse(r.body); S.sync = { uid: j.user_id, refresh: j.refresh_token, idToken: j.id_token, exp: Date.now() + (+j.expires_in || 3600) * 1000 }; save(); return S.sync.idToken; }
+    if (!r.status || r.status >= 500) throw new Error('offline');
+  }
+  const r = await netCall(`${B.auth}/v1/accounts:signUp?key=${k}`, { 'Content-Type': 'application/json' }, JSON.stringify({ returnSecureToken: true }));
+  if (r.status !== 200) throw new Error(r.status ? 'auth ' + r.status : 'offline');
+  const j = JSON.parse(r.body);
+  S.sync = { uid: j.localId, refresh: j.refreshToken, idToken: j.idToken, exp: Date.now() + (+j.expiresIn || 3600) * 1000 }; save();
+  return S.sync.idToken;
+}
+async function fsCall(path, body) {
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const t = await syncToken(attempt > 0);
+    const r = await netCall(syncBase().fs + path, { 'Content-Type': 'application/json', Authorization: 'Bearer ' + t }, JSON.stringify(body));
+    if (r.status === 401 && attempt === 0) continue;
+    return r;
+  }
+}
+const toFields = (b, uids) => ({
+  code: { stringValue: bEncode(b) },
+  uids: { arrayValue: { values: uids.map(u => ({ stringValue: u })) } },
+  done: { booleanValue: bOver(b) },
+  updated: { timestampValue: new Date().toISOString() },
+  // Firebase's TTL policy deletes battles nobody has touched for 30 days.
+  expires: { timestampValue: new Date(Date.now() + 30 * 864e5).toISOString() }
+});
+const fromDoc = d => ({
+  id: d.name.split('/').pop(), code: d.fields.code.stringValue,
+  uids: ((d.fields.uids.arrayValue || {}).values || []).map(v => v.stringValue),
+  done: !!(d.fields.done && d.fields.done.booleanValue), updateTime: d.updateTime,
+  expires: d.fields.expires ? Date.parse(d.fields.expires.timestampValue) : 0
+});
+const syncDelete = d => fsCall(':commit', { writes: [{ delete: docName(d.id), currentDocument: { updateTime: d.updateTime } }] }).catch(() => { });
+// "Remove this battle" on a synced battle deletes the shared copy too; the friend's app shows it as closed.
+function syncForget(b) {
+  if (!Sync.on || !b || !b.ouid) return;
+  S.bgone = S.bgone || {}; S.bgone[b.id] = Date.now();
+  const cut = Date.now() - 90 * 864e5; Object.keys(S.bgone).forEach(k => { if (S.bgone[k] < cut) delete S.bgone[k]; });
+  save();
+  if (b.synced || b.seen) syncToken().then(() => fsCall(':commit', { writes: [{ delete: docName(b.id) }] })).catch(() => { });
+}
+
+// Write this phone's copy of a battle, merged with whatever the other phone already wrote.
+async function syncPush(b) {
+  if (!Sync.on || !b || !b.ouid || b.closed || bSide(b) < 0 || Sync.pushing.has(b.id)) return false;
+  Sync.pushing.add(b.id);
+  try {
+    await syncToken();
+    const name = docName(b.id);
+    let r = await fsCall(':commit', { writes: [{ update: { name, fields: toFields(b, [S.sync.uid, b.ouid]) }, currentDocument: { exists: false } }] });
+    for (let k = 0; r.status !== 200 && (r.status === 400 || r.status === 409) && k < 3; k++) {
+      const g = await fsCall(':batchGet', { documents: [name] });
+      if (g.status !== 200) { r = g; break; }
+      const f = (JSON.parse(g.body).find(x => x.found) || {}).found;
+      if (!f) break;
+      const d = fromDoc(f);
+      try { const inc = bDecode('PH2:' + d.code); if (inc) bMerge(b, inc); } catch (e) { }
+      const uids = d.uids.slice(); [S.sync.uid, b.ouid].forEach(u => { if (!uids.includes(u) && uids.length < 2) uids.push(u); });
+      settle(b);
+      r = await fsCall(':commit', { writes: [{ update: { name, fields: toFields(b, uids) }, currentDocument: { updateTime: d.updateTime } }] });
+    }
+    if (r.status !== 200) throw new Error('write ' + r.status);
+    b.dirty = false; b.synced = Date.now(); b.exp = b.synced + 30 * 864e5; delete b.syncFail; Sync.err = null; save();
+    return true;
+  } catch (e) {
+    Sync.err = String(e.message || e); b.syncFail = Date.now(); save();
+    return false;
+  } finally { Sync.pushing.delete(b.id); }
+}
+
+// Pull every battle this player is in, merge them, and finish anything still unsent.
+async function syncPoll(force) {
+  if (!Sync.on || Sync.busy || !me().name) return;
+  if (!force && Date.now() - Sync.last < 10000) return;
+  Sync.busy = true; Sync.last = Date.now();
+  const news = [];
+  try {
+    await syncToken();
+    const uid = S.sync.uid, t0 = Date.now(), LIM = 60;
+    const r = await fsCall(':runQuery', { structuredQuery: { from: [{ collectionId: 'battles' }], where: { fieldFilter: { field: { fieldPath: 'uids' }, op: 'ARRAY_CONTAINS', value: { stringValue: uid } } }, limit: LIM } });
+    if (r.status !== 200) throw new Error('read ' + r.status);
+    const rows = JSON.parse(r.body).filter(x => x.document).map(x => fromDoc(x.document)), seen = new Set(rows.map(d => d.id));
+    for (const d of rows) {
+      if (S.bgone && S.bgone[d.id]) { syncDelete(d); continue; }   // removed on this phone
+      let inc = null; try { inc = bDecode('PH2:' + d.code); } catch (e) { }
+      if (!inc || inc.id !== d.id) continue;
+      const res = importBattle(inc, { sync: true, ouid: d.uids.find(u => u !== uid) });
+      if (!res) continue;
+      res.b.seen = Date.now(); res.b.exp = d.expires;
+      if (res.changed) news.push(res);
+      if (res.finishedNow && d.done) syncDelete(d);
+      // 30 days without a move: close it on both phones and delete the shared copy.
+      else if (!d.done && d.expires && d.expires < Date.now()) { if (!bOver(res.b)) { res.b.closed = 'expired'; save(); } syncDelete(d); }
+    }
+    // A battle that synced before but is gone now was removed by the friend (or expired): close it here too.
+    if (rows.length < LIM) for (const b of Object.values(bStore()))
+      if (b.ouid && !b.closed && !bOver(b) && bSide(b) >= 0 && !seen.has(b.id) && Math.max(b.synced || 0, b.seen || 0) && Math.max(b.synced || 0, b.seen || 0) < t0) {
+        b.closed = b.exp && Date.now() > b.exp ? 'expired' : 'left'; save();
+        if (b.closed === 'left') news.push({ b, closed: true });
+      }
+    for (const b of Object.values(bStore())) if (b.dirty && b.ouid && !b.closed && bSide(b) >= 0) await syncPush(b);
+    Sync.err = null;
+  } catch (e) { Sync.err = String(e.message || e); }
+  finally { Sync.busy = false; }
+  if (news.length) syncNotice(news);
+}
+function syncNotice(items) {
+  const top = stack[stack.length - 1], playing = top && SCREENS[top.name].play;
+  if (playing) return;
+  items.slice(0, 2).forEach(({ b, isNew, closed }) => {
+    const o = bOpp(b), n = bNext(b), on = o ? o.n : 'Your friend';
+    if (closed) toast(on + ' left your battle', 'It’s moved to Finished.', 'VS');
+    else if (n.t === 'play' || n.t === 'pick') toast(isNew ? (bSide(b) === 0 ? on + ' took your challenge' : on + ' started a battle') : on + ' played their turn', 'Your move', 'VS');
+    else if (n.t === 'over') toast('Battle with ' + on + ' is over', b.awarded === 'win' ? 'You won!' : b.awarded === 'loss' ? on + ' won' : 'It’s a tie', 'VS');
+  });
+  SFX.play('badge'); hap('badge');
+  const typing = document.activeElement && document.activeElement.matches('textarea, input');
+  if (top && ['home', 'battles', 'battle'].includes(top.name) && !typing && $('#modal').hidden) render(false);
+}
+function syncStart() {
+  if (!Sync.on) return;
+  // Firebase's free plan has a daily read quota, so only check when something could arrive, check less
+  // often away from the battle screens, and not at all mid-round (nothing would be shown anyway).
+  const anything = () => Object.keys(S.friends || {}).length || Object.values(bStore()).some(b => !b.closed && !bOver(b));
+  setTimeout(() => { if (anything()) syncPoll(true); }, 800);
+  setInterval(() => {
+    if (document.hidden || !anything()) return;
+    const top = stack[stack.length - 1], name = top && top.name;
+    if (name && SCREENS[name] && SCREENS[name].play) return;
+    if (Date.now() - Sync.last >= (['battles', 'battle'].includes(name) ? 12000 : 45000)) syncPoll(true);
+  }, 4000);
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) syncPoll(true); });
+}
 
 /* ================= events ================= */
 document.addEventListener('click', e => {
@@ -3600,7 +3839,9 @@ document.addEventListener('click', e => {
     case 'match': return startMatch(+d.ch, +d.i);
     case 'seq': return startSeq(+d.ch, +d.i);
     case 'gameAgain': return game.type === 'm' ? startMatch(game.ch, game.i, true) : startSeq(game.ch, game.i, true);
-    case 'battleNew': return newBattle();
+    case 'battleNew': return startNewBattle();
+    case 'battleNudge': return bNudge(bStore()[d.id]);
+    case 'battleRetry': { const bb = bStore()[d.id]; if (bb) { delete bb.syncFail; render(false); syncPush(bb).then(() => render(false)); } return; }
     case 'battleOpen': return go('battle', { id: d.id });
     case 'battlePick': return pickRound(bStore()[d.id], +d.c);
     case 'battlePlay': return playRound(bStore()[d.id]);
@@ -3609,7 +3850,8 @@ document.addEventListener('click', e => {
     case 'battlePaste': return pasteBattle();
     case 'battleOpenText': { const ta = $('#btPaste'); return openBattleText(ta ? ta.value : ''); }
     case 'battleName': return askName();
-    case 'battleDel': return confirmBox('Remove this battle?', 'It disappears from this phone. Your friend keeps their copy.', 'Remove', () => { delete bStore()[d.id]; save(); back(); }, true);
+    case 'battleDel': { const bb = bStore()[d.id], live = bb && Sync.on && bb.ouid && !bb.closed && !bOver(bb), on = bb && bOpp(bb) ? bOpp(bb).n : 'Your friend';
+      return confirmBox('Remove this battle?', live ? 'It ends the battle for both of you. ' + on + ' will see that you left.' : 'It disappears from this phone. Your friend keeps their copy.', 'Remove', () => { if (live) syncForget(bb); delete bStore()[d.id]; save(); back(); }, true); }
     case 'next': return nextQ();
     case 'quit': return (stack[stack.length - 1].name === 'sprint' && !sprint.running) ? back() : askQuit();
     case 'again': {
@@ -3654,6 +3896,8 @@ window.onSharedText = t => receiveShared(t);
 try { if (window.Android && Android.takeSharedText) { const t = Android.takeSharedText(); if (t) setTimeout(() => receiveShared(t), 300); } } catch (e) { }
 window.PH_battleCode = id => bStore()[id] ? bEncode(bStore()[id]) : null;
 window.PH_battleMsg = id => bStore()[id] ? bMessage(bStore()[id]) : null;
+window.PH_syncNow = () => syncPoll(true);
+syncStart();
 // Opened from a battle link in a browser: the page arrives as .../#b=CODE
 const takeHash = () => { const h = location.hash; if (!/^#bw?=/.test(h)) return; try { history.replaceState(null, '', location.pathname + location.search); } catch (e) { } setTimeout(() => linkArrival(h), 300); };
 takeHash(); window.addEventListener('hashchange', takeHash);
