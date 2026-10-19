@@ -657,7 +657,7 @@ svg{display:block}
 .bt-pick:active{transform:scale(.95)}
 .bt-pick b{font-weight:700;font-size:14.5px;line-height:1.2}
 .bt-pick small{color:var(--muted);font-size:12.5px}
-.bt-lens{width:62px;height:62px;border-radius:50%;overflow:hidden;background:hsl(var(--h) 60% 92%);display:grid;place-items:center}
+.bt-lens{width:62px;height:62px;border-radius:50%;overflow:hidden;background:hsl(var(--h) var(--tf-s) var(--tf-l));color:hsl(var(--h) var(--ti-s) var(--ti-l));display:grid;place-items:center}
 .bt-lens svg{width:100%;height:100%}
 @keyframes btDeal{from{transform:translateY(24px) rotate(-4deg);opacity:0}to{transform:none;opacity:1}}
 .bt-send{animation:btGlow 1.8s ease-in-out infinite}
@@ -2938,7 +2938,8 @@ SCREENS.settings = {
       <div class="about">
         <p>Powerhouse turns MCAT biology into quick rounds across 12 chapters: ${fmt(Object.keys(QS).length)} multiple-choice questions, ${BANK.reduce((a, c) => a + c.tf.length, 0)} true-or-false facts, ${BANK.reduce((a, c) => a + c.match.length, 0)} match sets and ${BANK.reduce((a, c) => a + c.seq.length, 0)} pathways.</p>
         <p>Every question and explanation is original, written for this app. After each answer, tap the topic to see its key points or practice it.</p>
-        <p>Version 1.6. Progress and battles are stored on this device only. Battles travel as a code inside the messages you send; there are no accounts or servers.</p>
+        <p>Version 1.8. Progress and battles are stored on this device only. Battles travel as a link inside the messages you send; there are no accounts or servers.</p>
+        <p>MCAT is a registered trademark of the Association of American Medical Colleges, which is not affiliated with this app.</p>
       </div>`;
   }
 };
