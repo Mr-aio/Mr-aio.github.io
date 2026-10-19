@@ -689,6 +689,9 @@ svg{display:block}
 
 .dialog a.btn{display:inline-flex;align-items:center;justify-content:center;text-decoration:none}
 .bt-synced{display:flex;align-items:flex-start;gap:6px}
+.bt-syncst{display:flex;align-items:flex-start;gap:6px;margin:14px 0 0}
+.bt-syncst svg{flex:none;width:16px;height:16px;margin-top:3px;color:var(--good)}
+.bt-syncst.bad{color:var(--bad)}
 .bt-synced svg{flex:none;width:16px;height:16px;margin-top:3px;color:var(--good)}
 .bt-who{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;margin-top:4px}
 .bt-whob{display:flex;flex-direction:column;align-items:center;gap:6px;padding:10px 4px;border-radius:var(--r-md);background:var(--sunk);min-width:0}
@@ -2944,7 +2947,7 @@ SCREENS.settings = {
       <div class="about">
         <p>Powerhouse turns MCAT biology into quick rounds across 12 chapters: ${fmt(Object.keys(QS).length)} multiple-choice questions, ${BANK.reduce((a, c) => a + c.tf.length, 0)} true-or-false facts, ${BANK.reduce((a, c) => a + c.match.length, 0)} match sets and ${BANK.reduce((a, c) => a + c.seq.length, 0)} pathways.</p>
         <p>Every question and explanation is original, written for this app. After each answer, tap the topic to see its key points or practice it.</p>
-        <p>Version 1.9. Progress is stored on this device. The first battle with a friend travels as a link; after that, battle turns sync through Powerhouse’s server so nobody has to resend. No accounts or sign-in.</p>
+        <p>Version 1.9.1. Progress is stored on this device. The first battle with a friend travels as a link; after that, battle turns sync through Powerhouse’s server so nobody has to resend. No accounts or sign-in.</p>
         <p>MCAT is a registered trademark of the Association of American Medical Colleges, which is not affiliated with this app.</p>
       </div>`;
   }
@@ -3525,9 +3528,9 @@ SCREENS.battles = {
         <li>Pick a category and answer 5 questions. You get 20 seconds each, and faster right answers score more.</li>
         <li>Send the battle link to a friend in any messaging app. They tap it, answer the same questions, then pick the next category. No app needed: it plays in the browser too.</li>
         ${Sync.on ? '<li>After that first link, turns go back and forth automatically. Rematches and new battles with friends you’ve played don’t need a link at all.</li>' : ''}
-        <li>Best total score after 3 rounds wins. You earn ATP for every right answer, plus ${BXP.win} for a win (${BXP.loss} for playing it out).</li></ol></section>`;
+        <li>Best total score after 3 rounds wins. You earn ATP for every right answer, plus ${BXP.win} for a win (${BXP.loss} for playing it out).</li></ol>${syncStatusHtml()}</section>`;
   },
-  after() { pendingBattle(); }
+  after() { pendingBattle(); if (Sync.on && me().name) syncPoll(true); }
 };
 
 SCREENS.battle = {
@@ -3575,7 +3578,7 @@ SCREENS.battle = {
           : `<section class="bt-act"><div class="bt-wait"><span class="bt-dots" aria-hidden="true"><i></i><i></i><i></i></span>Sending your move to ${on}…</div></section>`;
     } else if (n.t === 'wait') {
       act = b.dirty
-        ? `<section class="bt-act"><button class="btn primary wide bt-send" data-act="battleSend" data-id="${b.id}">Send to ${oP ? on : 'a friend'}</button><p class="small muted">Opens your share menu. Text the link from any messaging app${oP ? '' : ', to one friend or a group chat'}.</p></section>`
+        ? `<section class="bt-act"><button class="btn primary wide bt-send" data-act="battleSend" data-id="${b.id}">Send to ${oP ? on : 'a friend'}</button><p class="small muted">${Sync.on && oP ? 'Send this one link to ' + on + '. After that, your turns go back and forth automatically.' : 'Opens your share menu. Text the link from any messaging app' + (oP ? '' : ', to one friend or a group chat') + '.'}</p></section>`
         : `<section class="bt-act"><div class="bt-wait"><span class="bt-dots" aria-hidden="true"><i></i><i></i><i></i></span>Waiting for ${oP ? on : 'a friend to accept'}</div><button class="btn ghost wide" data-act="battleSend" data-id="${b.id}">${oP ? 'Send again' : 'Send to another friend'}</button>${oP ? '' : `<p class="small muted">${b.joins ? b.joins + (b.joins === 1 ? ' friend has' : ' friends have') + ' joined. Each one plays you in their own battle.' : 'You can send this challenge to several friends or a group chat. Each friend who joins plays you in their own battle.'}</p>`}</section>`;
     } else if (n.t === 'over') {
       const res = b.awarded || (a > c ? 'win' : a < c ? 'loss' : 'tie');
@@ -3639,6 +3642,12 @@ const syncBase = () => ({
 });
 const docName = id => 'projects/' + SYNC_CFG.projectId + '/databases/(default)/documents/battles/' + id;
 
+// "sign-in 400: ADMIN_ONLY_OPERATION" or "can't reach the server (…)": shown on the Battles screen.
+function why(r) {
+  if (!r.status) return "can't reach the server (" + String(r.body || 'no response').slice(0, 80) + ')';
+  let m = ''; try { const e = JSON.parse(r.body).error; m = typeof e === 'string' ? e : (e.message || e.status || ''); } catch (x) { m = String(r.body || '').slice(0, 80); }
+  return r.status + (m ? ': ' + String(m).slice(0, 120) : '');
+}
 let netSeq = 0; const netWait = {};
 window.__phNet = (id, status, body) => { const f = netWait[id]; if (f) { delete netWait[id]; f({ status, body }); } };
 function netCall(url, headers, body) {
@@ -3655,10 +3664,10 @@ async function syncToken(fresh) {
   if (a.refresh) {
     const r = await netCall(`${B.token}/v1/token?key=${k}`, { 'Content-Type': 'application/x-www-form-urlencoded' }, 'grant_type=refresh_token&refresh_token=' + encodeURIComponent(a.refresh));
     if (r.status === 200) { const j = JSON.parse(r.body); S.sync = { uid: j.user_id, refresh: j.refresh_token, idToken: j.id_token, exp: Date.now() + (+j.expires_in || 3600) * 1000 }; save(); return S.sync.idToken; }
-    if (!r.status || r.status >= 500) throw new Error('offline');
+    if (!r.status || r.status >= 500) throw new Error('sign-in ' + why(r));
   }
   const r = await netCall(`${B.auth}/v1/accounts:signUp?key=${k}`, { 'Content-Type': 'application/json' }, JSON.stringify({ returnSecureToken: true }));
-  if (r.status !== 200) throw new Error(r.status ? 'auth ' + r.status : 'offline');
+  if (r.status !== 200) throw new Error('sign-in ' + why(r));
   const j = JSON.parse(r.body);
   S.sync = { uid: j.localId, refresh: j.refreshToken, idToken: j.idToken, exp: Date.now() + (+j.expiresIn || 3600) * 1000 }; save();
   return S.sync.idToken;
@@ -3714,8 +3723,8 @@ async function syncPush(b) {
       settle(b);
       r = await fsCall(':commit', { writes: [{ update: { name, fields: toFields(b, uids) }, currentDocument: { updateTime: d.updateTime } }] });
     }
-    if (r.status !== 200) throw new Error('write ' + r.status);
-    b.dirty = false; b.synced = Date.now(); b.exp = b.synced + 30 * 864e5; delete b.syncFail; Sync.err = null; save();
+    if (r.status !== 200) throw new Error('save ' + why(r));
+    Sync.ok = Date.now(); b.dirty = false; b.synced = Date.now(); b.exp = b.synced + 30 * 864e5; delete b.syncFail; Sync.err = null; save();
     return true;
   } catch (e) {
     Sync.err = String(e.message || e); b.syncFail = Date.now(); save();
@@ -3733,7 +3742,7 @@ async function syncPoll(force) {
     await syncToken();
     const uid = S.sync.uid, t0 = Date.now(), LIM = 60;
     const r = await fsCall(':runQuery', { structuredQuery: { from: [{ collectionId: 'battles' }], where: { fieldFilter: { field: { fieldPath: 'uids' }, op: 'ARRAY_CONTAINS', value: { stringValue: uid } } }, limit: LIM } });
-    if (r.status !== 200) throw new Error('read ' + r.status);
+    if (r.status !== 200) throw new Error('read ' + why(r));
     const rows = JSON.parse(r.body).filter(x => x.document).map(x => fromDoc(x.document)), seen = new Set(rows.map(d => d.id));
     for (const d of rows) {
       if (S.bgone && S.bgone[d.id]) { syncDelete(d); continue; }   // removed on this phone
@@ -3754,11 +3763,18 @@ async function syncPoll(force) {
         if (b.closed === 'left') news.push({ b, closed: true });
       }
     for (const b of Object.values(bStore())) if (b.dirty && b.ouid && !b.closed && bSide(b) >= 0) await syncPush(b);
-    Sync.err = null;
+    Sync.err = null; Sync.ok = Date.now();
   } catch (e) { Sync.err = String(e.message || e); }
   finally { Sync.busy = false; }
+  syncShowStatus();
   if (news.length) syncNotice(news);
 }
+function syncStatusHtml() {
+  if (!Sync.on || !me().name) return '';
+  if (Sync.err) return `<p class="small bt-syncst bad" id="btSync">Battle sync isn't connecting (${esc(Sync.err)}). Battles still work by link.</p>`;
+  return `<p class="small muted bt-syncst" id="btSync">${Sync.ok ? ICON.check + 'Battle sync is on' : 'Checking battle sync…'}</p>`;
+}
+function syncShowStatus() { const el = $('#btSync'); if (el) el.outerHTML = syncStatusHtml(); }
 function syncNotice(items) {
   const top = stack[stack.length - 1], playing = top && SCREENS[top.name].play;
   if (playing) return;
