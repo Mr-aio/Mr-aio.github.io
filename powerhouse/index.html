@@ -397,6 +397,24 @@ svg{display:block}
 @keyframes rkPromo{from{transform:scale(.85);opacity:0}}
 @keyframes rkSpin{from{transform:rotate(-200deg) scale(.4);opacity:0}}
 @media (prefers-reduced-motion: reduce){.rk-radar .rk-em,.rk-radar i,.rk-vs > div,.rk-promo,.rk-promo .rk-em{animation:none}.rk-radar i{opacity:.3}}
+.mode .mi{flex:none;width:40px;height:40px;border-radius:13px;display:grid;place-items:center;color:#fff;margin-bottom:8px;box-shadow:inset 0 -3px 0 rgba(0,0,0,.16)}
+.mode .mi svg{width:23px;height:23px}
+.mi.mi-sp{background:hsl(28 86% 52%)}
+.mi.mi-mc{background:hsl(336 68% 55%)}
+.mi.mi-bd{background:hsl(43 92% 45%)}
+.mi.mi-wk{background:hsl(199 72% 44%)}
+.mi.mi-lb{background:hsl(160 64% 36%)}
+.topbar .pg-lb{color:hsl(160 64% 36%)}
+.topbar .pg-lb svg{width:26px;height:26px}
+.topbar .pg-lb + .icon-btn{margin-left:0}
+.pg-a .btn{display:flex;align-items:center;justify-content:center;gap:6px;min-width:0;padding:0 8px;font-size:15.5px;white-space:nowrap}
+.pg-a .btn svg{width:20px;height:20px;flex:none;display:block}
+.pg-a .btn > span{flex:none;display:grid}
+.pg-a .btn .pa{color:hsl(43 92% 45%)}
+.pg-a .btn .pl{color:hsl(160 64% 36%)}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]) .topbar .pg-lb,:root:not([data-theme="light"]) .pg-a .btn .pl{color:hsl(160 60% 56%)}:root:not([data-theme="light"]) .pg-a .btn .pa{color:hsl(45 95% 58%)}}
+:root[data-theme="dark"] .topbar .pg-lb,:root[data-theme="dark"] .pg-a .btn .pl{color:hsl(160 60% 56%)}
+:root[data-theme="dark"] .pg-a .btn .pa{color:hsl(45 95% 58%)}
 .badges{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
 .badge{display:grid;grid-template-columns:52px 1fr;gap:10px;align-items:center;padding:12px;border-radius:var(--r-md);background:var(--surface);box-shadow:var(--shadow)}
 .disc{width:52px;height:52px;border-radius:50%;display:grid;place-items:center;font-family:var(--display);font-weight:800;font-size:15px;
@@ -2799,7 +2817,7 @@ SCREENS.home = {
       <header class="topbar">
         <span class="pill atp" aria-label="${fmt(S.atp)} ATP">${ICON.atp}<b>${fmt(shownAtp)}</b></span>
         <span class="pill sun" aria-label="${ds}-day streak">${ICON.sun}<span>${ds} ${ds === 1 ? 'day' : 'days'}</span></span>
-        <button class="icon-btn" data-go="settings" aria-label="Settings">${ICON.gear}</button>
+        ${pgTopBtn()}<button class="icon-btn" data-go="settings" aria-label="Settings">${ICON.gear}</button>
       </header>
       <section class="hero">
         <button class="mito-wrap bob" data-act="mito" aria-label="Mito. Tap for another fact.">${mito(S.seen ? 'happy' : 'wow', 104)}</button>
@@ -2817,10 +2835,10 @@ SCREENS.home = {
       ${focus}
       <nav class="modes" aria-label="Game modes">
         ${(() => { const bm = bMoves(); return `<button class="mode wide" data-go="battles"><span class="bt-badge">VS</span><span><b>Battles</b><span>${bm ? `<span class="count">${bm}</span> waiting on your move` : 'Challenge a friend over text'}</span></span></button>`; })()}
-        <button class="mode" data-act="sprint" data-ch="0"><b>Sprint</b><span>60 seconds of true or false</span></button>
-        <button class="mode" data-act="review"><b>Memory cells</b><span>${rc ? `<span class="count">${rc}</span> missed to review` : 'Nothing to review yet'}</span></button>
-        <button class="mode" data-go="badges"><b>Badges</b><span>${nb} of ${BADGES.length} unlocked</span></button>
-        <button class="mode" data-go="weak"><b>Weak spots</b><span>${wk.length ? `<span class="count">${wk.length}</span> ${wk.length === 1 ? 'topic' : 'topics'} to review` : S.answered ? 'All solid so far' : 'See what to review'}</span></button>
+        <button class="mode" data-act="sprint" data-ch="0">${navMi('bolt', 'mi-sp')}<b>Sprint</b><span>60 seconds of true or false</span></button>
+        <button class="mode" data-act="review">${navMi('review', 'mi-mc')}<b>Memory cells</b><span>${rc ? `<span class="count">${rc}</span> missed to review` : 'Nothing to review yet'}</span></button>
+        <button class="mode" data-go="badges">${navMi('medal', 'mi-bd')}<b>Badges</b><span>${nb} of ${BADGES.length} unlocked</span></button>
+        <button class="mode" data-go="weak">${navMi('target', 'mi-wk')}<b>Weak spots</b><span>${wk.length ? `<span class="count">${wk.length}</span> ${wk.length === 1 ? 'topic' : 'topics'} to review` : S.answered ? 'All solid so far' : 'See what to review'}</span></button>
       </nav>
       <div class="section-head"><h2 class="h2">Chapters</h2><span class="small">${fmt(Object.keys(QS).length)} questions</span></div>
       <div class="tray">${BANK.map(c => {
@@ -3929,7 +3947,7 @@ function pgCard() {
   if (!PG.on) return '';
   return PG.signedIn
     ? `<section class="pg"><div class="pg-h"><span class="pg-ic">${PG_ICON}</span><span><b>Google Play Games</b><small>${PG.name ? 'Signed in as ' + esc(PG.name) + '. ' : ''}Your badges count as achievements.</small></span></div>
-        <div class="pg-a"><button class="btn ghost" data-act="pgShow" data-what="achievements">Achievements</button><button class="btn ghost" data-act="pgShow" data-what="leaderboards">Leaderboards</button></div></section>`
+        <div class="pg-a"><button class="btn ghost" data-act="pgShow" data-what="achievements"><span class="pa">${NAV_ICON.medal}</span>Achievements</button><button class="btn ghost" data-act="pgShow" data-what="leaderboards"><span class="pl">${NAV_ICON.podium}</span>Leaderboards</button></div></section>`
     : `<section class="pg"><div class="pg-h"><span class="pg-ic">${PG_ICON}</span><span><b>Google Play Games</b><small>Sign in to turn your badges into achievements and climb the ATP, streak and battle leaderboards.</small></span></div>
         <button class="btn primary wide" data-act="pgSignIn">Sign in to Play Games</button></section>`;
 }
@@ -4388,6 +4406,20 @@ function rkRefresh(b) {
 }
 const rkHowLi = () => Sync.on ? '<li>Battle a stranger to play for rating. You either take on a round 1 someone near your rating already played, or play your own and the next player takes it on. Strangers only see your alias.</li>' : '';
 window.PH_rk = { me: rkMe, alias: () => rkAlias(), emblem: rkEmblem, leagues: RK.LEAGUES, set: r => { rkMe().r = r; save(); } };
+
+/* ================= icons that lead the way: home tiles, leaderboards shortcut ================= */
+// Every home tile gets a colored icon so it reads at a glance, and in the Android app a podium button
+// next to Settings opens the Play Games leaderboards in one tap (signing in first if needed).
+const NAV_ICON = {
+  bolt: '<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M13.5 2L4 13.5h6.5L9.5 22 20 10.5h-6.5z"/></svg>',
+  review: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 12a8 8 0 1 1-2.6-5.9"/><path d="M20.2 3.8v4.8h-4.8"/><path d="M8.6 12.2l2.3 2.3 4.5-4.6"/></svg>',
+  medal: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7.5 2.5l3 6.2M16.5 2.5l-3 6.2"/><circle cx="12" cy="15" r="6.3"/><path fill="currentColor" stroke="none" d="M12 11.3l1.12 2.27 2.5.36-1.81 1.77.43 2.49L12 17.02l-2.24 1.17.43-2.49-1.81-1.77 2.5-.36z"/></svg>',
+  target: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="8.6"/><circle cx="12" cy="12" r="4.6"/><circle cx="12" cy="12" r="1.3" fill="currentColor" stroke="none"/></svg>',
+  podium: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2.5 20.5h19"/><path d="M8.6 20.5V8.8h6.8v11.7"/><path d="M3.2 20.5v-7.3h5.4M15.4 15.4h5.4v5.1"/><path d="M11.2 12.2l1.1-.8v5"/></svg>'
+};
+const navMi = (icon, cls) => `<span class="mi ${cls}">${NAV_ICON[icon]}</span>`;
+// Android app with Play Games: one tap from home to the leaderboards.
+const pgTopBtn = () => PG.on ? `<button class="icon-btn pg-lb" data-act="pgShow" data-what="leaderboards" aria-label="Leaderboards">${NAV_ICON.podium}</button>` : '';
 
 /* ================= events ================= */
 document.addEventListener('click', e => {
