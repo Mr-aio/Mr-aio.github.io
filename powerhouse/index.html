@@ -3209,15 +3209,16 @@ function utf8Name(n) {
   return enc.encode(chars.join(''));
 }
 // Layout: version(3) battle(42) sender side(1) p0(42) has p1(1) [p1(42)] sender name(6 + bytes)
-//         rounds(2) [chapter(4) + 5 question indexes(6)] per round, then per player per round:
+//         rounds(2) [chapter(4) + 5 question indexes(6; 8 in version 3)] per round, then per player per round:
 //         played(1) [5 x right(1) + half-seconds(6)], then an 18-bit check.
 function bEncode(b) {
   const sd = Math.max(0, bSide(b)), w = bitsOut();
-  w.put(2, 3); w.put(idNum(b.id), 42); w.put(sd, 1); w.put(idNum(b.p[0].d), 42);
+  const qb = b.r.some(r => r.q.some(q => q > 63)) ? 8 : 6;   // version 3 only when an index needs more than 6 bits
+  w.put(qb === 8 ? 3 : 2, 3); w.put(idNum(b.id), 42); w.put(sd, 1); w.put(idNum(b.p[0].d), 42);
   w.put(b.p[1] ? 1 : 0, 1); if (b.p[1]) w.put(idNum(b.p[1].d), 42);
   w.bytes(utf8Name(b.p[sd].n), 6);
   w.put(b.r.length, 2);
-  b.r.forEach(r => { w.put(r.c, 4); r.q.forEach(q => w.put(q, 6)); });
+  b.r.forEach(r => { w.put(r.c, 4); r.q.forEach(q => w.put(q, qb)); });
   [0, 1].forEach(side => b.r.forEach((_, i) => {
     const res = b.s[side][i];
     w.put(rDone(res) ? 1 : 0, 1);
@@ -3240,14 +3241,15 @@ function bDecode(text) {
 function decodeV2(code) {
   const all = fromChars(code);
   const r = bitsIn(all);
-  if (r.get(3) !== 2) throw new Error('version');
+  const ver = r.get(3); if (ver !== 2 && ver !== 3) throw new Error('version');
+  const qb = ver === 3 ? 8 : 6;
   const id = idStr(r.get(42)), sd = r.get(1), d0 = idStr(r.get(42)), has1 = r.get(1), d1 = has1 ? idStr(r.get(42)) : null;
   const nl = r.get(6), nb = new Uint8Array(nl); for (let i = 0; i < nl; i++) nb[i] = r.get(8);
   let name = ''; try { name = cleanName(new TextDecoder('utf-8', { fatal: true }).decode(nb)); } catch (e) { throw new Error('name'); }
   const nr = r.get(2), rounds = [];
   if (nr > BTL.ROUNDS) throw new Error('rounds');
   for (let i = 0; i < nr; i++) {
-    const c = r.get(4), q = [0, 0, 0, 0, 0].map(() => r.get(6));
+    const c = r.get(4), q = [0, 0, 0, 0, 0].map(() => r.get(qb));
     if (!CH[c] || q.some(x => !QS[c + ':' + x])) throw new Error('round');
     rounds.push({ c, q });
   }
@@ -4534,6 +4536,7 @@ if (S.rankIdx === undefined) S.rankIdx = rankInfo().idx;
 go('home');
 window.onSharedText = t => receiveShared(t);
 try { if (window.Android && Android.takeSharedText) { const t = Android.takeSharedText(); if (t) setTimeout(() => receiveShared(t), 300); } } catch (e) { }
+window.PH_bDecode = c => decodeV2(c);
 window.PH_battleCode = id => bStore()[id] ? bEncode(bStore()[id]) : null;
 window.PH_battleMsg = id => bStore()[id] ? bMessage(bStore()[id]) : null;
 window.PH_syncNow = () => syncPoll(true);
