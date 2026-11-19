@@ -319,6 +319,13 @@ svg{display:block}
 .pool .chip{width:100%}
 
 /* ---------- badges / stats / settings ---------- */
+.pg{display:flex;flex-direction:column;gap:12px;padding:14px;margin:0 0 14px;border-radius:var(--r-md);background:var(--surface);box-shadow:var(--shadow)}
+.pg-h{display:grid;grid-template-columns:44px 1fr;gap:12px;align-items:center}
+.pg-h b{display:block;font-weight:700;font-size:16px;line-height:1.2}
+.pg-h small{display:block;color:var(--muted);font-size:14px;line-height:1.35;margin-top:2px}
+.pg-ic{width:44px;height:44px;border-radius:14px;display:grid;place-items:center;background:var(--sunk);color:var(--good)}
+.pg-ic svg{width:26px;height:26px}
+.pg-a{display:grid;grid-template-columns:1fr 1fr;gap:10px}
 .badges{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
 .badge{display:grid;grid-template-columns:52px 1fr;gap:10px;align-items:center;padding:12px;border-radius:var(--r-md);background:var(--surface);box-shadow:var(--shadow)}
 .disc{width:52px;height:52px;border-radius:50%;display:grid;place-items:center;font-family:var(--display);font-weight:800;font-size:15px;
@@ -1593,7 +1600,8 @@ try {
     S.days = Object.assign(DEF().days, o.days || {});
   }
 } catch (e) { /* storage unavailable: play without saving */ }
-function save() { try { localStorage.setItem(KEY, JSON.stringify(S)); } catch (e) { } }
+function save() { try { localStorage.setItem(KEY, JSON.stringify(S)); } catch (e) { }
+  if (window.PH_pgSoon) window.PH_pgSoon(); }
 
 const dayStr = d => { d = d || new Date(); return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0'); };
 const yesterday = () => { const d = new Date(); d.setDate(d.getDate() - 1); return dayStr(d); };
@@ -2930,6 +2938,7 @@ SCREENS.badges = {
   html() {
     return `<div class="bar"><button class="icon-btn" data-back aria-label="Back">${ICON.back}</button><span class="bar-title">Badges</span></div>
       <h1>${Object.keys(S.badges).length} of ${BADGES.length} badges</h1>
+      ${pgCard()}
       <div class="badges">${BADGES.map(b => `<div class="badge${S.badges[b.id] ? '' : ' locked'}"><span class="disc">${esc(b.g)}</span><span><b>${esc(b.name)}</b><small>${esc(b.how)}</small></span></div>`).join('')}</div>`;
   }
 };
@@ -2947,7 +2956,7 @@ SCREENS.settings = {
       <div class="about">
         <p>Powerhouse turns MCAT biology into quick rounds across 12 chapters: ${fmt(Object.keys(QS).length)} multiple-choice questions, ${BANK.reduce((a, c) => a + c.tf.length, 0)} true-or-false facts, ${BANK.reduce((a, c) => a + c.match.length, 0)} match sets and ${BANK.reduce((a, c) => a + c.seq.length, 0)} pathways.</p>
         <p>Every question and explanation is original, written for this app. After each answer, tap the topic to see its key points or practice it.</p>
-        <p>Version 1.9.2. Progress is stored on this device. The first battle with a friend travels as a link; after that, battle turns sync through Powerhouse’s server so nobody has to resend. No accounts or sign-in.</p>
+        <p>Version 2.0. Progress is stored on this device. The first battle with a friend travels as a link; after that, battle turns sync through Powerhouse’s server so nobody has to resend. No sign-up needed. In the Android app, Google Play Games can keep your badges as achievements and put your scores on leaderboards.</p>
         <p>MCAT is a registered trademark of the Association of American Medical Colleges, which is not affiliated with this app.</p>
       </div>`;
   }
@@ -3803,6 +3812,45 @@ function syncStart() {
   document.addEventListener('visibilitychange', () => { if (!document.hidden) syncPoll(true); });
 }
 
+/* ================= Google Play Games (Android app only) ================= */
+// Every badge is also a Play Games achievement, and three leaderboards track total ATP, best streak and
+// battle wins. The page only names things ("krebs", "atp"); the app maps names to Play Console IDs.
+// In browsers, or in an app built without a Play Games project, PG.on is false and nothing shows.
+const PG = { on: false, signedIn: false, name: '', sent: {}, t: 0, checked: 0 };
+try { PG.on = !!(window.Android && Android.gamesOn && Android.gamesOn()); } catch (e) { }
+const pgBoards = () => ({ atp: S.atp || 0, streak: S.bestStreak || 0, wins: (S.bstats && S.bstats.w) || 0 });
+// Send whatever is new since the last sync: unlocked badges, and scores that went up.
+function pgSync() {
+  if (!PG.on || !PG.signedIn) return;
+  Object.keys(S.badges || {}).forEach(id => { if (!PG.sent['a.' + id]) { PG.sent['a.' + id] = 1; try { Android.gamesUnlock(id); } catch (e) { } } });
+  const b = pgBoards();
+  Object.keys(b).forEach(k => { if (b[k] > (PG.sent['l.' + k] || 0)) { PG.sent['l.' + k] = b[k]; try { Android.gamesScore(k, b[k]); } catch (e) { } } });
+}
+window.PH_pgSoon = () => { if (!PG.signedIn) return; clearTimeout(PG.t); PG.t = setTimeout(pgSync, 1500); };
+window.__phGames = (signedIn, name) => {
+  const was = PG.signedIn;
+  PG.signedIn = !!signedIn; PG.name = name || ''; PG.checked = Date.now();
+  if (PG.signedIn) pgSync();
+  const top = stack[stack.length - 1];
+  if (top && top.name === 'badges' && was !== PG.signedIn) render(false);
+};
+function pgCheck(interactive) { if (PG.on) try { Android.gamesCheck(!!interactive); } catch (e) { } }
+function pgStart() {
+  if (!PG.on) return;
+  pgCheck(false);
+  // Signed in from the Play Games app while Powerhouse was in the background: pick it up on return.
+  document.addEventListener('visibilitychange', () => { if (!document.hidden && !PG.signedIn && Date.now() - PG.checked > 20000) pgCheck(false); });
+}
+const PG_ICON = '<svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M7.5 6h9A5.5 5.5 0 0 1 22 11.5v1.8a3.7 3.7 0 0 1-6.6 2.3L14.6 14.5H9.4l-.8 1.1A3.7 3.7 0 0 1 2 13.3v-1.8A5.5 5.5 0 0 1 7.5 6Zm-.25 3.25v1.5h-1.5v1.5h1.5v1.5h1.5v-1.5h1.5v-1.5h-1.5v-1.5Zm8.5.25a1 1 0 1 0 0 2 1 1 0 0 0 0-2Zm2 2a1 1 0 1 0 0 2 1 1 0 0 0 0-2Z"/></svg>';
+function pgCard() {
+  if (!PG.on) return '';
+  return PG.signedIn
+    ? `<section class="pg"><div class="pg-h"><span class="pg-ic">${PG_ICON}</span><span><b>Google Play Games</b><small>${PG.name ? 'Signed in as ' + esc(PG.name) + '. ' : ''}Your badges count as achievements.</small></span></div>
+        <div class="pg-a"><button class="btn ghost" data-act="pgShow" data-what="achievements">Achievements</button><button class="btn ghost" data-act="pgShow" data-what="leaderboards">Leaderboards</button></div></section>`
+    : `<section class="pg"><div class="pg-h"><span class="pg-ic">${PG_ICON}</span><span><b>Google Play Games</b><small>Sign in to turn your badges into achievements and climb the ATP, streak and battle leaderboards.</small></span></div>
+        <button class="btn primary wide" data-act="pgSignIn">Sign in to Play Games</button></section>`;
+}
+
 /* ================= events ================= */
 document.addEventListener('click', e => {
   const t = e.target.closest('button'); if (!t || t.disabled) return;
@@ -3856,6 +3904,8 @@ document.addEventListener('click', e => {
     case 'seq': return startSeq(+d.ch, +d.i);
     case 'gameAgain': return game.type === 'm' ? startMatch(game.ch, game.i, true) : startSeq(game.ch, game.i, true);
     case 'battleNew': return startNewBattle();
+    case 'pgSignIn': return pgCheck(true);
+    case 'pgShow': try { Android.gamesShow(d.what); } catch (e) { } return;
     case 'battleNudge': return bNudge(bStore()[d.id]);
     case 'battleRetry': { const bb = bStore()[d.id]; if (bb) { delete bb.syncFail; render(false); syncPush(bb).then(() => render(false)); } return; }
     case 'battleOpen': return go('battle', { id: d.id });
@@ -3914,6 +3964,7 @@ window.PH_battleCode = id => bStore()[id] ? bEncode(bStore()[id]) : null;
 window.PH_battleMsg = id => bStore()[id] ? bMessage(bStore()[id]) : null;
 window.PH_syncNow = () => syncPoll(true);
 syncStart();
+pgStart();
 // Opened from a battle link in a browser: the page arrives as .../#b=CODE
 const takeHash = () => { const h = location.hash; if (!/^#bw?=/.test(h)) return; try { history.replaceState(null, '', location.pathname + location.search); } catch (e) { } setTimeout(() => linkArrival(h), 300); };
 takeHash(); window.addEventListener('hashchange', takeHash);
